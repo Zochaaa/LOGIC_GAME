@@ -27,9 +27,15 @@ def generate_gate_image(gate_type, filepath):
             d += logic.Or()
         elif gate_type == "NOT":
             d += logic.Not()
+        elif gate_type == "NAND":
+            d += logic.Nand()
+        elif gate_type == "NOR":
+            d += logic.Nor()
         else:
             d += logic.And()
+        d.draw(show=False)
         d.save(filepath)
+
 
 class GateImage:
     def __init__(self, canvas, x, y, gate_type, output_label, editor):
@@ -55,79 +61,155 @@ class GateImage:
         self.input_circles = []
         self.input_labels = []
         gap = self.image.height / (self.inputs_expected + 1)
+
         for i in range(self.inputs_expected):
             px = self.x - 10
             py = self.y + (i + 1) * gap
-            circle = canvas.create_oval(px-8, py-8, px+8, py+8, fill="blue", tags=("input", f"input_{i}", self.id))
-            canvas.tag_bind(circle, "<Button-1>", lambda e, idx=i: self.editor.try_finish_connection(self, idx))
+            circle = canvas.create_oval(px-8, py-8, px+8, py+8, fill="blue", tags=(f"input_{self.id}_{i}"))
             self.input_points.append((px, py))
             self.input_circles.append(circle)
             label = canvas.create_text(px - 10, py, text=chr(65 + i), anchor="e")
             self.input_labels.append(label)
 
+            def make_handler(gate, idx):
+                def handler(event):
+                    print(f"Kliknięto wejście {idx} bramki {gate.id}")
+                    gate.editor.try_finish_connection(gate, idx)
+                return handler
+
+            canvas.tag_bind(f"input_{self.id}_{i}", "<Button-1>", make_handler(self, i))
+
         px_out = self.x + self.image.width + 10
         py_out = self.y + self.image.height / 2
         self.output_point = (px_out, py_out)
         self.output_circle = canvas.create_oval(px_out-8, py_out-8, px_out+8, py_out+8, fill="red", tags=("output", self.id))
-        canvas.tag_bind(self.output_circle, "<Button-1>", self.on_output_click)
+
+        canvas.tag_bind(self.output_circle, "<ButtonPress-1>", self.on_output_press)
+        canvas.tag_bind(self.output_circle, "<B1-Motion>", self.on_output_drag)
+        canvas.tag_bind(self.output_circle, "<ButtonRelease-1>", self.on_output_release)
+
         self.output_label_id = canvas.create_text(px_out + 15, py_out, text=output_label, anchor="w")
 
-    def on_output_click(self, event):
-        self.editor.start_connection(self)
+    def on_output_press(self, event):
+        print(f"Start drag connection from gate {self.id}")
+        self.editor.start_connection(self, event.x, event.y)
+
+    def on_output_drag(self, event):
+        self.editor.update_temp_line(event.x, event.y)
+
+    def on_output_release(self, event):
+        print(f"Try finish connection at {event.x}, {event.y}")
+        self.editor.try_finish_connection_at(event.x, event.y)
+
+    def enable_drag(self):
+        self.canvas.tag_bind(self.image_id, "<Button-1>", self.start_drag)
+        self.canvas.tag_bind(self.image_id, "<B1-Motion>", self.on_drag)
+
+    def start_drag(self, event):
+        self.last_mouse_x = event.x_root
+        self.last_mouse_y = event.y_root
+
+    def on_drag(self, event):
+        dx = event.x_root - self.last_mouse_x
+        dy = event.y_root - self.last_mouse_y
+        self.last_mouse_x = event.x_root
+        self.last_mouse_y = event.y_root
+        self.move(dx, dy)
+
+    def move(self, dx, dy):
+        self.x += dx
+        self.y += dy
+        self.canvas.move(self.image_id, dx, dy)
+        for item in self.input_circles + self.input_labels:
+            self.canvas.move(item, dx, dy)
+        self.canvas.move(self.output_circle, dx, dy)
+        self.canvas.move(self.output_label_id, dx, dy)
+        self.input_points = [(x + dx, y + dy) for (x, y) in self.input_points]
+        self.output_point = (self.output_point[0] + dx, self.output_point[1] + dy)
 
 class CircuitEditor:
     def __init__(self, canvas):
         self.canvas = canvas
         self.gates = []
-        self.connections = []
+        self.connections = []  # lista połączeń: (source_gate, dest_gate, line_id, input_idx)
         self.output_counter = 1
+
         self.source_gate = None
         self.temp_line = None
         self.drawing_connection = False
-        self.canvas.bind("<Motion>", self.update_temp_line)
+
+        # Bind kliknięcia prawym przyciskiem na linię połączenia do usuwania
+        self.canvas.tag_bind("connection", "<Button-3>", self.delete_connection)
 
     def add_gate(self, gate_type):
         output_label = f"F{self.output_counter}"
         self.output_counter += 1
         gate = GateImage(self.canvas, 100 + 80 * len(self.gates), 100, gate_type, output_label, self)
         self.gates.append(gate)
+        gate.enable_drag()
 
-    def start_connection(self, gate):
+    def start_connection(self, gate, x, y):
         self.source_gate = gate
         self.drawing_connection = True
-        x, y = gate.output_point
         if self.temp_line:
             self.canvas.delete(self.temp_line)
         self.temp_line = self.canvas.create_line(x, y, x, y, fill="gray", dash=(4, 2), width=2)
+        print(f"Start connection from gate {gate.id} at {x}, {y}")
 
-    def update_temp_line(self, event):
+    def update_temp_line(self, x, y):
         if self.drawing_connection and self.temp_line:
             x0, y0 = self.source_gate.output_point
-            self.canvas.coords(self.temp_line, x0, y0, event.x, event.y)
+            self.canvas.coords(self.temp_line, x0, y0, x, y)
 
-    def try_finish_connection(self, dest_gate, input_index):
-        if not self.drawing_connection or dest_gate == self.source_gate:
+    def try_finish_connection_at(self, x, y):
+        if not self.drawing_connection:
+            print("Nie rysujemy połączenia")
+            return
+
+        found_gate = None
+        found_input_idx = None
+
+        for gate in self.gates:
+            for idx, (ix, iy) in enumerate(gate.input_points):
+                dist = ((ix - x) ** 2 + (iy - y) ** 2) ** 0.5
+                if dist <= 15:
+                    found_gate = gate
+                    found_input_idx = idx
+                    break
+            if found_gate:
+                break
+
+        if not found_gate:
+            print("Nie znaleziono wejścia pod kursorem, anuluję połączenie")
             self.cancel_connection()
             return
 
-        if dest_gate.input_connected_flags[input_index]:
+        if found_gate == self.source_gate:
+            print("Nie można połączyć bramki z samą sobą")
+            self.cancel_connection()
+            return
+
+        if found_gate.input_connected_flags[found_input_idx]:
+            print("Wejście już zajęte")
             self.cancel_connection()
             return
 
         src_x, src_y = self.source_gate.output_point
-        dst_x, dst_y = dest_gate.input_points[input_index]
+        dst_x, dst_y = found_gate.input_points[found_input_idx]
 
         if self.temp_line:
             self.canvas.delete(self.temp_line)
+
         line_id = self.canvas.create_line(src_x, src_y, dst_x, dst_y, arrow=tk.LAST, width=2, tags="connection")
 
-        self.connections.append((self.source_gate, dest_gate, line_id, input_index))
-        dest_gate.input_connected_flags[input_index] = True
-        self.source_gate.outputs.append(dest_gate)
+        self.connections.append((self.source_gate, found_gate, line_id, found_input_idx))
+        found_gate.input_connected_flags[found_input_idx] = True
+        self.source_gate.outputs.append(found_gate)
 
         self.source_gate = None
         self.temp_line = None
         self.drawing_connection = False
+        print("Połączenie utworzone")
 
     def cancel_connection(self):
         if self.temp_line:
@@ -136,19 +218,52 @@ class CircuitEditor:
         self.source_gate = None
         self.drawing_connection = False
 
+    def delete_connection(self, event):
+        # Znajdź linię pod kursorem
+        item = self.canvas.find_withtag("current")
+        if not item:
+            return
+        line_id = item[0]
+
+        # Znajdź połączenie w liście
+        connection_to_delete = None
+        for conn in self.connections:
+            if conn[2] == line_id:
+                connection_to_delete = conn
+                break
+
+        if not connection_to_delete:
+            return
+
+        source_gate, dest_gate, line_id, input_idx = connection_to_delete
+
+        # Usuń linię z canvas
+        self.canvas.delete(line_id)
+        # Oznacz wejście jako wolne
+        dest_gate.input_connected_flags[input_idx] = False
+        # Usuń dest_gate z outputs źródła
+        if dest_gate in source_gate.outputs:
+            source_gate.outputs.remove(dest_gate)
+
+        # Usuń połączenie z listy
+        self.connections.remove(connection_to_delete)
+
+        print(f"Usunięto połączenie między {source_gate.id} a {dest_gate.id} na wejściu {input_idx}")
+
 def main():
     root = tk.Tk()
     root.title("Edytor bramek logicznych")
 
     canvas = tk.Canvas(root, width=1000, height=700, bg="white")
     canvas.pack()
+    canvas.bind("<Button-1>", lambda e: print(f"Kliknięto canvas w {e.x}, {e.y}"))
 
     frame = tk.Frame(root)
     frame.pack()
 
     editor = CircuitEditor(canvas)
 
-    for gate in ["AND", "OR", "NOT"]:
+    for gate in ["AND", "OR", "NOT", "NAND", "NOR"]:
         tk.Button(frame, text=gate, command=lambda g=gate: editor.add_gate(g)).pack(side=tk.LEFT)
 
     root.mainloop()
