@@ -153,6 +153,7 @@ class CircuitEditor:
         gate = GateImage(self.canvas, 100 + 80 * len(self.gates), 100, gate_type, output_label, self)
         self.gates.append(gate)
         gate.enable_drag()
+        gate.bind_right_click() 
 
     def start_connection(self, gate, x, y):
         self.source_gate = gate
