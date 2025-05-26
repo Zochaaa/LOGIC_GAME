@@ -50,6 +50,8 @@ class GateImage:
         self.input_connected_flags = [False] * self.inputs_expected
         self.outputs = []
 
+        self.input_names = []  # Zapamiętujemy etykiety wejść
+
         self.filepath = f"tmp_{self.id}.png"
         generate_gate_image(gate_type, self.filepath, self.inputs_expected)
         self.image = Image.open(self.filepath)
@@ -62,18 +64,24 @@ class GateImage:
         self.input_labels = []
         gap = self.image.height / (self.inputs_expected + 1)
 
+        gate_number = ''.join(filter(str.isdigit, output_label))
+        if gate_number == '':
+            gate_number = '1'
+
         for i in range(self.inputs_expected):
             px = self.x - 10
             py = self.y + (i + 1) * gap
             circle = canvas.create_oval(px-8, py-8, px+8, py+8, fill="blue", tags=(f"input_{self.id}_{i}"))
             self.input_points.append((px, py))
             self.input_circles.append(circle)
-            label = canvas.create_text(px - 10, py, text=chr(65 + i), anchor="e")
+
+            label_text = f"{chr(97 + i)}{gate_number}"  # np. a1, b1
+            label = canvas.create_text(px - 10, py, text=label_text, anchor="e")
             self.input_labels.append(label)
+            self.input_names.append(label_text)  # Zapamiętujemy nazwę
 
             def make_handler(gate, idx):
                 def handler(event):
-                    print(f"Kliknięto wejście {idx} bramki {gate.id}")
                     gate.editor.try_finish_connection(gate, idx)
                 return handler
 
@@ -91,14 +99,12 @@ class GateImage:
         self.output_label_id = canvas.create_text(px_out + 15, py_out, text=output_label, anchor="w")
 
     def on_output_press(self, event):
-        print(f"Start drag connection from gate {self.id}")
         self.editor.start_connection(self, event.x, event.y)
 
     def on_output_drag(self, event):
         self.editor.update_temp_line(event.x, event.y)
 
     def on_output_release(self, event):
-        print(f"Try finish connection at {event.x}, {event.y}")
         self.editor.try_finish_connection_at(event.x, event.y)
 
     def enable_drag(self):
@@ -260,12 +266,16 @@ class CircuitEditor:
                 return expressions[gate.id]
 
             inputs = []
-            for src, dst, _, _ in self.connections:
+            used_idxs = []
+
+            for src, dst, _, input_idx in self.connections:
                 if dst == gate:
                     inputs.append(dfs(src))
+                    used_idxs.append(input_idx)
 
-            while len(inputs) < gate.inputs_expected:
-                inputs.append("1")
+            for i in range(gate.inputs_expected):
+                if i not in used_idxs:
+                    inputs.append(gate.input_names[i])
 
             if gate.gate_type == "AND":
                 expr = f"({' & '.join(inputs)})"
