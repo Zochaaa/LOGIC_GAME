@@ -19,26 +19,25 @@ def cleanup_temp_images():
 
 atexit.register(cleanup_temp_images)
 
-def generate_gate_image(gate_type, filepath):
+def generate_gate_image(gate_type, filepath, inputs=2):
     with schemdraw.Drawing() as d:
         if gate_type == "AND":
-            d += logic.And()
+            d += logic.And(n=inputs)
         elif gate_type == "OR":
-            d += logic.Or()
+            d += logic.Or(n=inputs)
         elif gate_type == "NOT":
             d += logic.Not()
         elif gate_type == "NAND":
-            d += logic.Nand()
+            d += logic.Nand(n=inputs)
         elif gate_type == "NOR":
-            d += logic.Nor()
+            d += logic.Nor(n=inputs)
         else:
             d += logic.And()
         d.draw(show=False)
         d.save(filepath)
 
-
 class GateImage:
-    def __init__(self, canvas, x, y, gate_type, output_label, editor):
+    def __init__(self, canvas, x, y, gate_type, output_label, editor, inputs=2):
         self.canvas = canvas
         self.editor = editor
         self.gate_type = gate_type
@@ -47,15 +46,16 @@ class GateImage:
         self.id = str(uuid.uuid4())
         self.output_label = output_label
 
+        self.inputs_expected = 1 if gate_type == "NOT" else max(2, min(4, inputs))
+        self.input_connected_flags = [False] * self.inputs_expected
+        self.outputs = []
+
         self.filepath = f"tmp_{self.id}.png"
-        generate_gate_image(gate_type, self.filepath)
+        generate_gate_image(gate_type, self.filepath, self.inputs_expected)
         self.image = Image.open(self.filepath)
         self.tk_image = ImageTk.PhotoImage(self.image)
 
         self.image_id = canvas.create_image(x, y, image=self.tk_image, anchor="nw")
-        self.inputs_expected = 1 if gate_type == "NOT" else 2
-        self.input_connected_flags = [False] * self.inputs_expected
-        self.outputs = []
 
         self.input_points = []
         self.input_circles = []
@@ -137,23 +137,22 @@ class CircuitEditor:
     def __init__(self, canvas):
         self.canvas = canvas
         self.gates = []
-        self.connections = []  # lista połączeń: (source_gate, dest_gate, line_id, input_idx)
+        self.connections = []
         self.output_counter = 1
 
         self.source_gate = None
         self.temp_line = None
         self.drawing_connection = False
 
-        # Bind kliknięcia prawym przyciskiem na linię połączenia do usuwania
         self.canvas.tag_bind("connection", "<Button-3>", self.delete_connection)
 
-    def add_gate(self, gate_type):
+    def add_gate(self, gate_type, inputs=2):
         output_label = f"F{self.output_counter}"
         self.output_counter += 1
-        gate = GateImage(self.canvas, 100 + 80 * len(self.gates), 100, gate_type, output_label, self)
+        gate = GateImage(self.canvas, 100 + 80 * len(self.gates), 100, gate_type, output_label, self, inputs)
         self.gates.append(gate)
         gate.enable_drag()
-        gate.bind_right_click() 
+        gate.bind_right_click()
 
     def start_connection(self, gate, x, y):
         self.source_gate = gate
@@ -161,7 +160,6 @@ class CircuitEditor:
         if self.temp_line:
             self.canvas.delete(self.temp_line)
         self.temp_line = self.canvas.create_line(x, y, x, y, fill="gray", dash=(4, 2), width=2)
-        print(f"Start connection from gate {gate.id} at {x}, {y}")
 
     def update_temp_line(self, x, y):
         if self.drawing_connection and self.temp_line:
@@ -170,7 +168,6 @@ class CircuitEditor:
 
     def try_finish_connection_at(self, x, y):
         if not self.drawing_connection:
-            print("Nie rysujemy połączenia")
             return
 
         found_gate = None
@@ -186,18 +183,7 @@ class CircuitEditor:
             if found_gate:
                 break
 
-        if not found_gate:
-            print("Nie znaleziono wejścia pod kursorem, anuluję połączenie")
-            self.cancel_connection()
-            return
-
-        if found_gate == self.source_gate:
-            print("Nie można połączyć bramki z samą sobą")
-            self.cancel_connection()
-            return
-
-        if found_gate.input_connected_flags[found_input_idx]:
-            print("Wejście już zajęte")
+        if not found_gate or found_gate == self.source_gate or found_gate.input_connected_flags[found_input_idx]:
             self.cancel_connection()
             return
 
@@ -216,7 +202,6 @@ class CircuitEditor:
         self.source_gate = None
         self.temp_line = None
         self.drawing_connection = False
-        print("Połączenie utworzone")
 
     def cancel_connection(self):
         if self.temp_line:
@@ -226,40 +211,22 @@ class CircuitEditor:
         self.drawing_connection = False
 
     def delete_connection(self, event):
-        # Znajdź linię pod kursorem
         item = self.canvas.find_withtag("current")
         if not item:
             return
         line_id = item[0]
 
-        # Znajdź połączenie w liście
-        connection_to_delete = None
         for conn in self.connections:
             if conn[2] == line_id:
-                connection_to_delete = conn
+                source_gate, dest_gate, _, input_idx = conn
+                self.canvas.delete(line_id)
+                dest_gate.input_connected_flags[input_idx] = False
+                if dest_gate in source_gate.outputs:
+                    source_gate.outputs.remove(dest_gate)
+                self.connections.remove(conn)
                 break
 
-        if not connection_to_delete:
-            return
-
-        source_gate, dest_gate, line_id, input_idx = connection_to_delete
-
-        # Usuń linię z canvas
-        self.canvas.delete(line_id)
-        # Oznacz wejście jako wolne
-        dest_gate.input_connected_flags[input_idx] = False
-        # Usuń dest_gate z outputs źródła
-        if dest_gate in source_gate.outputs:
-            source_gate.outputs.remove(dest_gate)
-
-        # Usuń połączenie z listy
-        self.connections.remove(connection_to_delete)
-
-        print(f"Usunięto połączenie między {source_gate.id} a {dest_gate.id} na wejściu {input_idx}")
     def delete_gate(self, gate):
-        print(f"Usuwanie bramki {gate.id}")
-
-        # Usuń wszystkie połączenia z tą bramką
         to_delete = [conn for conn in self.connections if conn[0] == gate or conn[1] == gate]
         for conn in to_delete:
             src, dst, line_id, input_idx = conn
@@ -270,7 +237,6 @@ class CircuitEditor:
                 src.outputs.remove(dst)
             self.connections.remove(conn)
 
-        # Usuń elementy graficzne bramki
         self.canvas.delete(gate.image_id)
         for item in gate.input_circles + gate.input_labels:
             self.canvas.delete(item)
@@ -278,6 +244,13 @@ class CircuitEditor:
         self.canvas.delete(gate.output_label_id)
 
         self.gates.remove(gate)
+
+    def clear_all(self):
+        for gate in self.gates[:]:
+            self.delete_gate(gate)
+        self.gates.clear()
+        self.connections.clear()
+        self.output_counter = 1
 
     def generate_expression(self):
         expressions = {}
@@ -287,33 +260,31 @@ class CircuitEditor:
                 return expressions[gate.id]
 
             inputs = []
-            # Znajdź wszystkie połączenia które mają gate jako cel
             for src, dst, _, _ in self.connections:
                 if dst == gate:
                     inputs.append(dfs(src))
 
-            # Uzupełnij brakujące wejścia jako "1"
             while len(inputs) < gate.inputs_expected:
                 inputs.append("1")
 
             if gate.gate_type == "AND":
-                expr = f"({inputs[0]} & {inputs[1]})"
+                expr = f"({' & '.join(inputs)})"
             elif gate.gate_type == "OR":
-                expr = f"({inputs[0]} | {inputs[1]})"
+                expr = f"({' | '.join(inputs)})"
             elif gate.gate_type == "NOT":
                 expr = f"(~{inputs[0]})"
             elif gate.gate_type == "NAND":
-                expr = f"~({inputs[0]} & {inputs[1]})"
+                expr = f"~({' & '.join(inputs)})"
             elif gate.gate_type == "NOR":
-                expr = f"~({inputs[0]} | {inputs[1]})"
+                expr = f"~({' | '.join(inputs)})"
             else:
                 expr = gate.output_label
+
             expressions[gate.id] = expr
             return expr
 
         output_exprs = []
         for gate in self.gates:
-            # Bramka, która nie jest źródłem połączenia (czyli nie jest na wyjściu innych)
             is_output = all(gate != conn[0] for conn in self.connections)
             if is_output:
                 output_exprs.append(f"{gate.output_label} = {dfs(gate)}")
@@ -335,18 +306,24 @@ def main():
 
     canvas = tk.Canvas(root, width=1000, height=700, bg="pink")
     canvas.pack()
-    canvas.bind("<Button-1>", lambda e: print(f"Kliknięto canvas w {e.x}, {e.y}"))
 
     frame = tk.Frame(root)
     frame.pack()
 
     editor = CircuitEditor(canvas)
 
-    for gate in ["AND", "OR", "NOT", "NAND", "NOR"]:
-        tk.Button(frame, text=gate, command=lambda g=gate: editor.add_gate(g)).pack(side=tk.LEFT)
+    tk.Label(frame, text="Liczba wejść (2-4):").pack(side=tk.LEFT)
+    entry_inputs = tk.Spinbox(frame, from_=2, to=4, width=5)
+    entry_inputs.pack(side=tk.LEFT)
 
-    btn_generate = tk.Button(frame, text="Generuj funkcję", command=editor.generate_expression)
-    btn_generate.pack(side=tk.LEFT)
+    def make_add_gate(gate_type):
+        return lambda: editor.add_gate(gate_type, int(entry_inputs.get()))
+
+    for gate in ["AND", "OR", "NOT", "NAND", "NOR"]:
+        tk.Button(frame, text=gate, command=make_add_gate(gate)).pack(side=tk.LEFT)
+
+    tk.Button(frame, text="Generuj funkcję", command=editor.generate_expression).pack(side=tk.LEFT)
+    tk.Button(frame, text="Wyczyść", command=editor.clear_all).pack(side=tk.LEFT)
 
     root.mainloop()
 
