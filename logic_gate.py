@@ -127,6 +127,12 @@ class GateImage:
         self.input_points = [(x + dx, y + dy) for (x, y) in self.input_points]
         self.output_point = (self.output_point[0] + dx, self.output_point[1] + dy)
 
+    def bind_right_click(self):
+        self.canvas.tag_bind(self.image_id, "<Button-3>", self.on_right_click)
+
+    def on_right_click(self, event):
+        self.editor.delete_gate(self)
+
 class CircuitEditor:
     def __init__(self, canvas):
         self.canvas = canvas
@@ -249,6 +255,78 @@ class CircuitEditor:
         self.connections.remove(connection_to_delete)
 
         print(f"Usunięto połączenie między {source_gate.id} a {dest_gate.id} na wejściu {input_idx}")
+    def delete_gate(self, gate):
+        print(f"Usuwanie bramki {gate.id}")
+
+        # Usuń wszystkie połączenia z tą bramką
+        to_delete = [conn for conn in self.connections if conn[0] == gate or conn[1] == gate]
+        for conn in to_delete:
+            src, dst, line_id, input_idx = conn
+            self.canvas.delete(line_id)
+            if dst.input_connected_flags[input_idx]:
+                dst.input_connected_flags[input_idx] = False
+            if dst in src.outputs:
+                src.outputs.remove(dst)
+            self.connections.remove(conn)
+
+        # Usuń elementy graficzne bramki
+        self.canvas.delete(gate.image_id)
+        for item in gate.input_circles + gate.input_labels:
+            self.canvas.delete(item)
+        self.canvas.delete(gate.output_circle)
+        self.canvas.delete(gate.output_label_id)
+
+        self.gates.remove(gate)
+
+    def generate_expression(self):
+        expressions = {}
+
+        def dfs(gate):
+            if gate.id in expressions:
+                return expressions[gate.id]
+
+            inputs = []
+            # Znajdź wszystkie połączenia które mają gate jako cel
+            for src, dst, _, _ in self.connections:
+                if dst == gate:
+                    inputs.append(dfs(src))
+
+            # Uzupełnij brakujące wejścia jako "1"
+            while len(inputs) < gate.inputs_expected:
+                inputs.append("1")
+
+            if gate.gate_type == "AND":
+                expr = f"({inputs[0]} & {inputs[1]})"
+            elif gate.gate_type == "OR":
+                expr = f"({inputs[0]} | {inputs[1]})"
+            elif gate.gate_type == "NOT":
+                expr = f"(~{inputs[0]})"
+            elif gate.gate_type == "NAND":
+                expr = f"~({inputs[0]} & {inputs[1]})"
+            elif gate.gate_type == "NOR":
+                expr = f"~({inputs[0]} | {inputs[1]})"
+            else:
+                expr = gate.output_label
+            expressions[gate.id] = expr
+            return expr
+
+        output_exprs = []
+        for gate in self.gates:
+            # Bramka, która nie jest źródłem połączenia (czyli nie jest na wyjściu innych)
+            is_output = all(gate != conn[0] for conn in self.connections)
+            if is_output:
+                output_exprs.append(f"{gate.output_label} = {dfs(gate)}")
+
+        result = "\n".join(output_exprs)
+        self.show_expression_window(result)
+
+    def show_expression_window(self, text):
+        win = tk.Toplevel()
+        win.title("Wygenerowana funkcja logiczna")
+        text_widget = tk.Text(win, width=60, height=15)
+        text_widget.pack(padx=10, pady=10)
+        text_widget.insert(tk.END, text)
+        text_widget.config(state=tk.DISABLED)
 
 def main():
     root = tk.Tk()
@@ -265,6 +343,9 @@ def main():
 
     for gate in ["AND", "OR", "NOT", "NAND", "NOR"]:
         tk.Button(frame, text=gate, command=lambda g=gate: editor.add_gate(g)).pack(side=tk.LEFT)
+
+    btn_generate = tk.Button(frame, text="Generuj funkcję", command=editor.generate_expression)
+    btn_generate.pack(side=tk.LEFT)
 
     root.mainloop()
 
