@@ -333,7 +333,7 @@ def main():
     root = tk.Tk()
     root.title("Edytor bramek logicznych")
 
-    canvas = tk.Canvas(root, width=1000, height=700, bg="white")
+    canvas = tk.Canvas(root, width=1000, height=700, bg="pink")
     canvas.pack()
     canvas.bind("<Button-1>", lambda e: print(f"Kliknięto canvas w {e.x}, {e.y}"))
 
