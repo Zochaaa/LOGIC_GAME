@@ -50,11 +50,17 @@ class GateImage:
         self.input_connected_flags = [False] * self.inputs_expected
         self.outputs = []
 
-        self.input_names = []  # Zapamiętujemy etykiety wejść
+        self.input_names = []
 
         self.filepath = f"tmp_{self.id}.png"
         generate_gate_image(gate_type, self.filepath, self.inputs_expected)
         self.image = Image.open(self.filepath)
+
+        # Skalowanie obrazu w zależności od liczby wejść
+        scale_factor = 1.0 + 0.1 * (self.inputs_expected - 2)
+        new_width = int(self.image.width * scale_factor)
+        new_height = int(self.image.height * scale_factor)
+        self.image = self.image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         self.tk_image = ImageTk.PhotoImage(self.image)
 
         self.image_id = canvas.create_image(x, y, image=self.tk_image, anchor="nw")
@@ -62,23 +68,25 @@ class GateImage:
         self.input_points = []
         self.input_circles = []
         self.input_labels = []
-        gap = self.image.height / (self.inputs_expected + 1)
+        gap = new_height / (self.inputs_expected + 1)
 
-        gate_number = ''.join(filter(str.isdigit, output_label))
-        if gate_number == '':
-            gate_number = '1'
+
+        gate_number = ''.join(filter(str.isdigit, output_label)) or '1'
 
         for i in range(self.inputs_expected):
             px = self.x - 10
             py = self.y + (i + 1) * gap
-            circle = canvas.create_oval(px-8, py-8, px+8, py+8, fill="blue", tags=(f"input_{self.id}_{i}"))
+            circle_radius = 5  # stały rozmiar kółek wejściowych
+            circle = canvas.create_oval(px - circle_radius, py - circle_radius,
+                                        px + circle_radius, py + circle_radius,
+                                        fill="blue", tags=(f"input_{self.id}_{i}"))
             self.input_points.append((px, py))
             self.input_circles.append(circle)
 
-            label_text = f"{chr(97 + i)}{gate_number}"  # np. a1, b1
+            label_text = f"{chr(97 + i)}{gate_number}"
             label = canvas.create_text(px - 10, py, text=label_text, anchor="e")
             self.input_labels.append(label)
-            self.input_names.append(label_text)  # Zapamiętujemy nazwę
+            self.input_names.append(label_text)
 
             def make_handler(gate, idx):
                 def handler(event):
@@ -90,7 +98,7 @@ class GateImage:
         px_out = self.x + self.image.width + 10
         py_out = self.y + self.image.height / 2
         self.output_point = (px_out, py_out)
-        self.output_circle = canvas.create_oval(px_out-8, py_out-8, px_out+8, py_out+8, fill="red", tags=("output", self.id))
+        self.output_circle = canvas.create_oval(px_out - 8, py_out - 8, px_out + 8, py_out + 8, fill="red", tags=("output", self.id))
 
         canvas.tag_bind(self.output_circle, "<ButtonPress-1>", self.on_output_press)
         canvas.tag_bind(self.output_circle, "<B1-Motion>", self.on_output_drag)
@@ -176,18 +184,19 @@ class CircuitEditor:
         if not self.drawing_connection:
             return
 
+        # Szukamy najbliższego wejścia do punktu (x, y) ze wszystkich bramek
         found_gate = None
         found_input_idx = None
+        min_dist = float('inf')
+        tolerance = 25
 
         for gate in self.gates:
             for idx, (ix, iy) in enumerate(gate.input_points):
                 dist = ((ix - x) ** 2 + (iy - y) ** 2) ** 0.5
-                if dist <= 15:
+                if dist <= tolerance and dist < min_dist:
                     found_gate = gate
                     found_input_idx = idx
-                    break
-            if found_gate:
-                break
+                    min_dist = dist
 
         if not found_gate or found_gate == self.source_gate or found_gate.input_connected_flags[found_input_idx]:
             self.cancel_connection()
@@ -208,6 +217,28 @@ class CircuitEditor:
         self.source_gate = None
         self.temp_line = None
         self.drawing_connection = False
+
+
+        if not found_gate or found_gate == self.source_gate or found_gate.input_connected_flags[found_input_idx]:
+            self.cancel_connection()
+            return
+
+        src_x, src_y = self.source_gate.output_point
+        dst_x, dst_y = found_gate.input_points[found_input_idx]
+
+        if self.temp_line:
+            self.canvas.delete(self.temp_line)
+
+        line_id = self.canvas.create_line(src_x, src_y, dst_x, dst_y, arrow=tk.LAST, width=2, tags="connection")
+
+        self.connections.append((self.source_gate, found_gate, line_id, found_input_idx))
+        found_gate.input_connected_flags[found_input_idx] = True
+        self.source_gate.outputs.append(found_gate)
+
+        self.source_gate = None
+        self.temp_line = None
+        self.drawing_connection = False
+
 
     def cancel_connection(self):
         if self.temp_line:
