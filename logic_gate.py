@@ -7,8 +7,10 @@ import matplotlib
 import os
 import atexit
 
+# Ustawienie trybu backendu matplotlib do 'Agg' (do zapisu do pliku bez GUI)
 matplotlib.use('Agg')
 
+# Usuwanie tymczasowych plików graficznych po zamknięciu programu
 def cleanup_temp_images():
     for file in os.listdir():
         if file.startswith("tmp_") and file.endswith(".png"):
@@ -19,6 +21,7 @@ def cleanup_temp_images():
 
 atexit.register(cleanup_temp_images)
 
+# Funkcja generująca obraz bramki logicznej do pliku PNG
 def generate_gate_image(gate_type, filepath, inputs=2):
     with schemdraw.Drawing() as d:
         if gate_type == "AND":
@@ -36,6 +39,7 @@ def generate_gate_image(gate_type, filepath, inputs=2):
         d.draw(show=False)
         d.save(filepath)
 
+# Klasa reprezentująca pojedynczą bramkę jako obraz
 class GateImage:
     def __init__(self, canvas, x, y, gate_type, output_label, editor, inputs=2):
         self.canvas = canvas
@@ -43,7 +47,7 @@ class GateImage:
         self.gate_type = gate_type
         self.x = x
         self.y = y
-        self.id = str(uuid.uuid4())
+        self.id = str(uuid.uuid4())  # unikalny identyfikator
         self.output_label = output_label
 
         self.inputs_expected = 1 if gate_type == "NOT" else max(2, min(4, inputs))
@@ -52,11 +56,11 @@ class GateImage:
 
         self.input_names = []
 
+        # Generowanie i skalowanie obrazu bramki
         self.filepath = f"tmp_{self.id}.png"
         generate_gate_image(gate_type, self.filepath, self.inputs_expected)
         self.image = Image.open(self.filepath)
 
-        # Skalowanie obrazu w zależności od liczby wejść
         scale_factor = 1.0 + 0.1 * (self.inputs_expected - 2)
         new_width = int(self.image.width * scale_factor)
         new_height = int(self.image.height * scale_factor)
@@ -65,18 +69,18 @@ class GateImage:
 
         self.image_id = canvas.create_image(x, y, image=self.tk_image, anchor="nw")
 
+        # Tworzenie punktów wejściowych
         self.input_points = []
         self.input_circles = []
         self.input_labels = []
         gap = new_height / (self.inputs_expected + 1)
-
 
         gate_number = ''.join(filter(str.isdigit, output_label)) or '1'
 
         for i in range(self.inputs_expected):
             px = self.x - 10
             py = self.y + (i + 1) * gap
-            circle_radius = 5  # stały rozmiar kółek wejściowych
+            circle_radius = 5
             circle = canvas.create_oval(px - circle_radius, py - circle_radius,
                                         px + circle_radius, py + circle_radius,
                                         fill="blue", tags=(f"input_{self.id}_{i}"))
@@ -95,10 +99,13 @@ class GateImage:
 
             canvas.tag_bind(f"input_{self.id}_{i}", "<Button-1>", make_handler(self, i))
 
+        # Tworzenie wyjścia (punkt i etykieta)
         px_out = self.x + self.image.width + 10
         py_out = self.y + self.image.height / 2
         self.output_point = (px_out, py_out)
-        self.output_circle = canvas.create_oval(px_out - 8, py_out - 8, px_out + 8, py_out + 8, fill="red", tags=("output", self.id))
+        self.output_circle = canvas.create_oval(px_out - 8, py_out - 8,
+                                                px_out + 8, py_out + 8,
+                                                fill="red", tags=("output", self.id))
 
         canvas.tag_bind(self.output_circle, "<ButtonPress-1>", self.on_output_press)
         canvas.tag_bind(self.output_circle, "<B1-Motion>", self.on_output_drag)
@@ -106,6 +113,7 @@ class GateImage:
 
         self.output_label_id = canvas.create_text(px_out + 15, py_out, text=output_label, anchor="w")
 
+    # Obsługa rysowania połączenia od wyjścia
     def on_output_press(self, event):
         self.editor.start_connection(self, event.x, event.y)
 
@@ -115,6 +123,7 @@ class GateImage:
     def on_output_release(self, event):
         self.editor.try_finish_connection_at(event.x, event.y)
 
+    # Umożliwia przesuwanie bramki
     def enable_drag(self):
         self.canvas.tag_bind(self.image_id, "<Button-1>", self.start_drag)
         self.canvas.tag_bind(self.image_id, "<B1-Motion>", self.on_drag)
@@ -141,12 +150,14 @@ class GateImage:
         self.input_points = [(x + dx, y + dy) for (x, y) in self.input_points]
         self.output_point = (self.output_point[0] + dx, self.output_point[1] + dy)
 
+    # Obsługa usuwania bramki po kliknięciu prawym przyciskiem
     def bind_right_click(self):
         self.canvas.tag_bind(self.image_id, "<Button-3>", self.on_right_click)
 
     def on_right_click(self, event):
         self.editor.delete_gate(self)
 
+# Klasa główna edytora obwodu logicznego
 class CircuitEditor:
     def __init__(self, canvas):
         self.canvas = canvas
@@ -160,6 +171,7 @@ class CircuitEditor:
 
         self.canvas.tag_bind("connection", "<Button-3>", self.delete_connection)
 
+    # Dodawanie bramki do układu
     def add_gate(self, gate_type, inputs=2):
         output_label = f"F{self.output_counter}"
         self.output_counter += 1
@@ -168,6 +180,7 @@ class CircuitEditor:
         gate.enable_drag()
         gate.bind_right_click()
 
+    # Rozpoczęcie rysowania połączenia
     def start_connection(self, gate, x, y):
         self.source_gate = gate
         self.drawing_connection = True
@@ -175,16 +188,17 @@ class CircuitEditor:
             self.canvas.delete(self.temp_line)
         self.temp_line = self.canvas.create_line(x, y, x, y, fill="gray", dash=(4, 2), width=2)
 
+    # Aktualizacja linii tymczasowej połączenia
     def update_temp_line(self, x, y):
         if self.drawing_connection and self.temp_line:
             x0, y0 = self.source_gate.output_point
             self.canvas.coords(self.temp_line, x0, y0, x, y)
 
+    # Próba zakończenia połączenia przy danym punkcie
     def try_finish_connection_at(self, x, y):
         if not self.drawing_connection:
             return
 
-        # Szukamy najbliższego wejścia do punktu (x, y) ze wszystkich bramek
         found_gate = None
         found_input_idx = None
         min_dist = float('inf')
@@ -218,28 +232,6 @@ class CircuitEditor:
         self.temp_line = None
         self.drawing_connection = False
 
-
-        if not found_gate or found_gate == self.source_gate or found_gate.input_connected_flags[found_input_idx]:
-            self.cancel_connection()
-            return
-
-        src_x, src_y = self.source_gate.output_point
-        dst_x, dst_y = found_gate.input_points[found_input_idx]
-
-        if self.temp_line:
-            self.canvas.delete(self.temp_line)
-
-        line_id = self.canvas.create_line(src_x, src_y, dst_x, dst_y, arrow=tk.LAST, width=2, tags="connection")
-
-        self.connections.append((self.source_gate, found_gate, line_id, found_input_idx))
-        found_gate.input_connected_flags[found_input_idx] = True
-        self.source_gate.outputs.append(found_gate)
-
-        self.source_gate = None
-        self.temp_line = None
-        self.drawing_connection = False
-
-
     def cancel_connection(self):
         if self.temp_line:
             self.canvas.delete(self.temp_line)
@@ -247,6 +239,7 @@ class CircuitEditor:
         self.source_gate = None
         self.drawing_connection = False
 
+    # Usuwanie połączenia
     def delete_connection(self, event):
         item = self.canvas.find_withtag("current")
         if not item:
@@ -263,6 +256,7 @@ class CircuitEditor:
                 self.connections.remove(conn)
                 break
 
+    # Usuwanie bramki
     def delete_gate(self, gate):
         to_delete = [conn for conn in self.connections if conn[0] == gate or conn[1] == gate]
         for conn in to_delete:
@@ -279,9 +273,9 @@ class CircuitEditor:
             self.canvas.delete(item)
         self.canvas.delete(gate.output_circle)
         self.canvas.delete(gate.output_label_id)
-
         self.gates.remove(gate)
 
+    # Czyści cały układ
     def clear_all(self):
         for gate in self.gates[:]:
             self.delete_gate(gate)
@@ -289,6 +283,7 @@ class CircuitEditor:
         self.connections.clear()
         self.output_counter = 1
 
+    # Generuje wyrażenia logiczne
     def generate_expression(self):
         expressions = {}
 
@@ -341,6 +336,7 @@ class CircuitEditor:
         text_widget.insert(tk.END, text)
         text_widget.config(state=tk.DISABLED)
 
+# Funkcja główna aplikacji
 def main():
     root = tk.Tk()
     root.title("Edytor bramek logicznych")
