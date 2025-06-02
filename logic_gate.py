@@ -345,7 +345,7 @@ def main():
     root = tk.Tk()
     root.title("Edytor bramek logicznych")
 
-    canvas = tk.Canvas(root, width=1000, height=700, bg="pink")
+    canvas = tk.Canvas(root, width=1000, height=700, bg="white")
     canvas.pack()
 
     frame = tk.Frame(root)
